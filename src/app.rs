@@ -152,19 +152,27 @@ impl App {
     pub fn run(&mut self, terminal: &mut Tui) -> Result<()> {
         self.load_deck_list()?;
         let mut needs_redraw = true;
+        let mut screen_changed = true;
 
         while !self.should_quit {
             if needs_redraw {
+                if screen_changed {
+                    terminal.clear()?;
+                    screen_changed = false;
+                }
                 self.draw(terminal)?;
                 needs_redraw = false;
             }
+            let prev_screen = std::mem::discriminant(&self.screen);
             match event::poll_event(Duration::from_millis(250))? {
                 AppEvent::Key(key) => {
                     self.handle_key(key)?;
+                    screen_changed = std::mem::discriminant(&self.screen) != prev_screen;
                     needs_redraw = true;
                 }
                 AppEvent::Resize(_, _) => {
                     needs_redraw = true;
+                    screen_changed = true;
                 }
                 AppEvent::None => {}
             }
