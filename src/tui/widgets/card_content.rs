@@ -23,4 +23,3 @@ impl Widget for CardContent<'_> {
         paragraph.render(area, buf);
     }
 }
-

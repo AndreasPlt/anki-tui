@@ -2,3 +2,7 @@
 /tests/fixtures/*.anki2
 /tests/fixtures/*.anki2-shm
 /tests/fixtures/*.anki2-wal
+sidecar/.venv/
+sidecar/.pytest_cache/
+sidecar/__pycache__/
+sidecar/tests/__pycache__/

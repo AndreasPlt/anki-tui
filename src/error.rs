@@ -2,20 +2,17 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("database error: {0}")]
-    Db(#[from] rusqlite::Error),
-
-    #[error("database locked — is Anki desktop open?\n{0}")]
-    DbLocked(rusqlite::Error),
-
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("protobuf decode error: {0}")]
-    ProtoDecode(String),
-
     #[error("collection not found at {0}")]
     CollectionNotFound(PathBuf),
+
+    #[error("sidecar error: {0}")]
+    Sidecar(String),
+
+    #[error("sidecar protocol error: {0}")]
+    SidecarProtocol(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

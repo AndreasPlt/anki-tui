@@ -5,17 +5,17 @@ Terminal-based flashcard reviewer for local Anki collections. Read and review yo
 ## Features
 
 - **Deck browser** with collapsible hierarchy and due counts (new/learn/review)
-- **Card review** with front/back flow and SM-2 scheduling
+- **Card review** with front/back flow and Anki's official scheduler
 - **HTML rendering** to terminal: bold, italic, colors, lists, tables, `<hr>`
 - **Inline images** via Kitty graphics protocol (Kitty, WezTerm, Ghostty)
 - **Audio playback** for `[sound:]` references (MP3, OGG) with auto-play
-- **Write-back** to Anki's SQLite DB — reviews sync with Anki desktop/mobile
+- **Write-back through Anki's backend** — reviews sync with Anki desktop/mobile
 - **Dry-run mode** for safe browsing without modifying the collection
 - **Sub-deck gathering** — studying a parent deck includes all children
 
 ## Install
 
-Requires Rust 1.85+.
+Requires Rust 1.85+ and [`uv`](https://docs.astral.sh/uv/) for the Python sidecar.
 
 ```bash
 git clone <repo-url>
@@ -24,6 +24,9 @@ cargo build --release
 ```
 
 Binary at `target/release/anki-tui`.
+
+The first run starts the sidecar with `uv --project sidecar run ...`, which resolves the
+official `anki` Python package into `sidecar/.venv`.
 
 ## Usage
 
@@ -68,20 +71,19 @@ anki-tui --dry-run
 
 ## How It Works
 
-- Reads Anki's `collection.anki2` SQLite database directly
-- Decodes protobuf blobs for templates, notetypes, and deck configs
-- Renders Anki's Mustache-like templates (`{{Field}}`, conditionals, cloze deletions)
+- Starts a `uv`-managed Python sidecar next to the Rust TUI
+- The sidecar opens the collection with Anki's official Python package
+- Deck counts, rendered card HTML, interval labels, and answers come from Anki's scheduler
 - Converts HTML to styled terminal text via `scraper` + `ratatui`
-- Implements SM-2 scheduling (interval/ease computation, learning steps, relearning)
-- Writes card state and revlog entries back to the DB with `usn=-1` for sync compatibility
+- Live answers are written through Anki's backend; `--dry-run` skips writes in-memory
 
 ## Limitations
 
-- **SM-2 only** — FSRS scheduling is not implemented (falls back to SM-2 fields)
-- **No filtered decks, burying, or undo**
-- **Prototype-level Anki compatibility** — protobuf field mappings may break with Anki version changes
-- **Not a replacement for Anki** — use `--dry-run` if unsure
+- Requires a working `uv` installation and a compatible official `anki` Python package
+- Do not keep Anki Desktop open on the same collection while using live review mode
+- `--dry-run` is a no-write preview; it advances through queued cards for the session but does not simulate all future scheduler transitions
+- Undo is not implemented in the TUI
 
 ## Dependencies
 
-ratatui, crossterm, rusqlite, scraper, rodio, image, chrono, base64, thiserror, rand, dirs
+ratatui, crossterm, scraper, rodio, image, base64, thiserror, serde, serde_json, dirs, plus the `uv` sidecar dependencies in `sidecar/pyproject.toml`

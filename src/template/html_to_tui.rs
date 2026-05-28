@@ -189,7 +189,7 @@ fn walk_tree(node_ref: NodeRef<'_, Node>, state: &mut RenderState) {
                 }
                 "img" => {
                     if let Some(src) = el.attr("src") {
-                        let path = state.media_dir.join(src);
+                        let path = media_path(&state.media_dir, src);
                         let line_idx = state.lines.len();
                         state.flush_line();
                         state.images.push(ImageRef {
@@ -268,7 +268,7 @@ fn process_text_with_sound(text: &str, state: &mut RenderState) {
         let after = &remaining[start + 7..]; // skip "[sound:"
         if let Some(end) = after.find(']') {
             let filename = &after[..end];
-            let path = state.media_dir.join(filename);
+            let path = media_path(&state.media_dir, filename);
             state.audio.push(AudioRef { path });
             // Show a styled placeholder
             let style = Style::default().fg(Color::DarkGray);
@@ -284,6 +284,45 @@ fn process_text_with_sound(text: &str, state: &mut RenderState) {
     }
     if !remaining.is_empty() {
         state.push_text(remaining);
+    }
+}
+
+fn media_path(media_dir: &Path, raw: &str) -> PathBuf {
+    let raw = raw.strip_prefix("file://").unwrap_or(raw);
+    let decoded = percent_decode(raw);
+    let path = PathBuf::from(decoded);
+    if path.is_absolute() {
+        path
+    } else {
+        media_dir.join(path)
+    }
+}
+
+fn percent_decode(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2]))
+        {
+            out.push((hi << 4) | lo);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| raw.to_string())
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 

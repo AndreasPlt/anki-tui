@@ -1,4 +1,4 @@
-use crate::scheduler::sm2;
+use crate::sidecar::ReviewButton;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -6,40 +6,40 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 /// Rating bar showing Again/Hard/Good/Easy with interval previews.
-pub struct RatingBar {
-    intervals: [i32; 4],
+pub struct RatingBar<'a> {
+    buttons: &'a [ReviewButton],
 }
 
-impl RatingBar {
-    pub fn new(intervals: [i32; 4]) -> Self {
-        Self { intervals }
+impl<'a> RatingBar<'a> {
+    pub fn new(buttons: &'a [ReviewButton]) -> Self {
+        Self { buttons }
     }
 }
 
-impl Widget for RatingBar {
+impl Widget for RatingBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let labels = [
-            ("1:Again", Color::Red),
-            ("2:Hard", Color::Yellow),
-            ("3:Good", Color::Green),
-            ("4:Easy", Color::Cyan),
-        ];
-
-        let spans: Vec<Span> = labels
+        let colors = [Color::Red, Color::Yellow, Color::Green, Color::Cyan];
+        let spans: Vec<Span> = self
+            .buttons
             .iter()
-            .zip(self.intervals.iter())
-            .flat_map(|((label, color), &ivl)| {
+            .filter(|button| button.enabled)
+            .flat_map(|button| {
+                let color = colors
+                    .get(button.rating.saturating_sub(1) as usize)
+                    .copied()
+                    .unwrap_or(Color::White);
+                let label = format!("{}:{}", button.rating, button.label);
+                let interval = if button.interval.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", button.interval)
+                };
                 vec![
                     Span::styled(
                         format!(" {label}"),
-                        Style::default()
-                            .fg(*color)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        format!("({})", sm2::format_interval(ivl)),
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(interval, Style::default().fg(Color::DarkGray)),
                     Span::raw("  "),
                 ]
             })

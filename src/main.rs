@@ -1,9 +1,7 @@
 mod app;
-mod db;
 mod error;
 mod media;
-mod proto;
-mod scheduler;
+mod sidecar;
 mod template;
 mod tui;
 
@@ -34,13 +32,9 @@ fn main() -> Result<()> {
 fn resolve_paths(args: &[String]) -> Result<(PathBuf, PathBuf)> {
     // Check for --collection <path> argument
     let collection_path = if let Some(pos) = args.iter().position(|a| a == "--collection") {
-        args.get(pos + 1)
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                error::Error::CollectionNotFound(PathBuf::from(
-                    "--collection requires a path",
-                ))
-            })?
+        args.get(pos + 1).map(PathBuf::from).ok_or_else(|| {
+            error::Error::CollectionNotFound(PathBuf::from("--collection requires a path"))
+        })?
     } else {
         // Auto-detect Anki collection
         find_default_collection()?
@@ -48,9 +42,7 @@ fn resolve_paths(args: &[String]) -> Result<(PathBuf, PathBuf)> {
 
     // Check for --media-dir <path> override
     let media_dir = if let Some(pos) = args.iter().position(|a| a == "--media-dir") {
-        args.get(pos + 1)
-            .map(PathBuf::from)
-            .unwrap_or_default()
+        args.get(pos + 1).map(PathBuf::from).unwrap_or_default()
     } else {
         // Default: sibling to collection file, or fall back to real Anki media dir
         let sibling = collection_path

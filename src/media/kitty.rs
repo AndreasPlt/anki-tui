@@ -16,8 +16,8 @@ pub fn is_kitty_supported() -> bool {
 }
 
 fn load_as_png(path: &Path) -> io::Result<Vec<u8>> {
-    let img = image::open(path)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+    let img =
+        image::open(path).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
     let mut png_bytes = Vec::new();
     img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)

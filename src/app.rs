@@ -1,23 +1,14 @@
-use crate::db::models::{CardRow, DeckInfo, DeckRow};
-use crate::db::{mutations, queries};
 use crate::error::Result;
 use crate::media::kitty;
-use crate::proto::deck_config::DeckSchedulingConfig;
-use crate::proto::notetype_config;
-use crate::proto::template_config;
-use crate::scheduler::answer::{self, ReviewTimer};
-use crate::scheduler::queue;
-use crate::scheduler::sm2::{self, Rating};
-use crate::scheduler::timing::{self, SchedTiming};
-use crate::template::{html_to_tui, render};
+use crate::sidecar::{DeckInfo, Rating, ReviewButton, ReviewCard, ReviewSnapshot, SidecarClient};
+use crate::template::html_to_tui;
 use crate::tui::event::{self, AppEvent};
-use crate::tui::screens::deck_select::{visible_indices, DeckSelectScreen, DeckSelectState};
+use crate::tui::screens::deck_select::{DeckSelectScreen, DeckSelectState, visible_indices};
 use crate::tui::screens::review::{DoneScreen, ReviewPhase, ReviewScreen};
 use crate::tui::terminal::Tui;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::text::Line;
-use ratatui::widgets::{StatefulWidget, Widget};
-use rusqlite::Connection;
+use ratatui::widgets::{Clear, StatefulWidget, Widget};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -28,9 +19,8 @@ pub enum ReviewMode {
 }
 
 pub struct App {
-    conn: Connection,
+    sidecar: SidecarClient,
     media_dir: PathBuf,
-    timing: SchedTiming,
     screen: Screen,
     should_quit: bool,
     kitty_supported: bool,
@@ -41,7 +31,6 @@ pub struct App {
 enum Screen {
     DeckSelect {
         decks: Vec<DeckInfo>,
-        deck_rows: Vec<DeckRow>,
         state: DeckSelectState,
     },
     Review(Box<ReviewState>),
@@ -52,17 +41,14 @@ enum Screen {
 }
 
 struct ReviewState {
+    deck_id: i64,
     deck_name: String,
-    deck_ids: Vec<i64>,
-    queue: Vec<CardRow>,
-    current_idx: usize,
+    card: ReviewCard,
     phase: ReviewPhase,
     scroll: u16,
     front_lines: Vec<Line<'static>>,
     back_lines: Vec<Line<'static>>,
-    intervals: [i32; 4],
-    conf: DeckSchedulingConfig,
-    timer: ReviewTimer,
+    buttons: Vec<ReviewButton>,
     reviewed_count: u32,
     new_remaining: u32,
     learn_remaining: u32,
@@ -73,73 +59,64 @@ struct ReviewState {
     back_audio: Vec<html_to_tui::AudioRef>,
 }
 
-fn load_card_content(
-    conn: &Connection,
+fn state_from_snapshot(
+    snapshot: ReviewSnapshot,
     media_dir: &Path,
-    timing: &SchedTiming,
-    rs: &mut ReviewState,
-) -> Result<()> {
-    let card = &rs.queue[rs.current_idx];
-    let note = queries::load_note(conn, card.nid)?;
-    let field_names = queries::load_field_names(conn, note.mid)?;
-    let template_row = queries::load_template(conn, note.mid, card.ord)?;
-    let notetype = queries::load_notetype(conn, note.mid)?;
+    reviewed_count: u32,
+) -> Option<ReviewState> {
+    let card = snapshot.card?;
+    let front_rendered = html_to_tui::html_to_lines(&card.question_html, media_dir);
+    let back_rendered = html_to_tui::html_to_lines(&card.answer_html, media_dir);
+    let mut front_audio = front_rendered.audio;
+    extend_audio_refs(&mut front_audio, &card.front_audio, media_dir);
+    let mut back_audio = back_rendered.audio;
+    extend_audio_refs(&mut back_audio, &card.back_audio, media_dir);
+    Some(ReviewState {
+        deck_id: snapshot.deck_id,
+        deck_name: snapshot.deck_name,
+        buttons: card.buttons.clone(),
+        card,
+        phase: ReviewPhase::ShowFront,
+        scroll: 0,
+        front_lines: front_rendered.lines,
+        back_lines: back_rendered.lines,
+        reviewed_count,
+        new_remaining: snapshot.counts.new,
+        learn_remaining: snapshot.counts.learn,
+        review_remaining: snapshot.counts.review,
+        front_images: front_rendered.images,
+        back_images: back_rendered.images,
+        front_audio,
+        back_audio,
+    })
+}
 
-    let tmpl_config = template_config::decode_template_config(&template_row.config)?;
-    let _nt_config = notetype_config::decode_notetype_config(&notetype.config);
-
-    let field_map = render::build_field_map(&note.flds, &field_names);
-
-    let front_html = render::render_template(&tmpl_config.qfmt, &field_map, None, card.ord);
-    let front_rendered = html_to_tui::html_to_lines(&front_html, media_dir);
-    rs.front_lines = front_rendered.lines;
-    rs.front_images = front_rendered.images;
-    rs.front_audio = front_rendered.audio;
-
-    let back_html =
-        render::render_template(&tmpl_config.afmt, &field_map, Some(&front_html), card.ord);
-    let back_rendered = html_to_tui::html_to_lines(&back_html, media_dir);
-    rs.back_lines = back_rendered.lines;
-    rs.back_images = back_rendered.images;
-    rs.back_audio = back_rendered.audio;
-
-    // Only compute days_late for review cards (due is a day number)
-    let days_late = if card.queue == 2 {
-        (timing.days_elapsed - card.due).max(0) as i32
-    } else {
-        0
-    };
-    rs.intervals = sm2::preview_intervals_for_card(
-        card.queue,
-        card.ctype,
-        card.ivl,
-        card.factor,
-        days_late,
-        card.left,
-        &rs.conf,
-    );
-
-    rs.timer = ReviewTimer::start();
-    rs.phase = ReviewPhase::ShowFront;
-    rs.scroll = 0;
-
-    Ok(())
+fn extend_audio_refs(
+    audio: &mut Vec<html_to_tui::AudioRef>,
+    filenames: &[String],
+    media_dir: &Path,
+) {
+    for filename in filenames {
+        let path = media_dir.join(filename);
+        if !audio.iter().any(|a| a.path == path) {
+            audio.push(html_to_tui::AudioRef { path });
+        }
+    }
 }
 
 impl App {
-    pub fn new(collection_path: &Path, media_dir: PathBuf, review_mode: ReviewMode) -> Result<Self> {
-        let conn = crate::db::connection::open_collection(collection_path)?;
-        let creation_secs = queries::get_collection_creation_time(&conn)?;
-        let offset_mins = queries::get_creation_offset_mins(&conn).unwrap_or(0);
-        let timing = timing::sched_timing_today(creation_secs, offset_mins);
+    pub fn new(
+        collection_path: &Path,
+        media_dir: PathBuf,
+        review_mode: ReviewMode,
+    ) -> Result<Self> {
+        let sidecar = SidecarClient::start(collection_path, &media_dir)?;
 
         Ok(Self {
-            conn,
+            sidecar,
             media_dir,
-            timing,
             screen: Screen::DeckSelect {
                 decks: Vec::new(),
-                deck_rows: Vec::new(),
                 state: DeckSelectState::new(&[]),
             },
             should_quit: false,
@@ -152,27 +129,31 @@ impl App {
     pub fn run(&mut self, terminal: &mut Tui) -> Result<()> {
         self.load_deck_list()?;
         let mut needs_redraw = true;
-        let mut screen_changed = true;
+        let mut force_clear = true;
 
         while !self.should_quit {
             if needs_redraw {
-                if screen_changed {
+                if force_clear {
+                    self.clear_images();
                     terminal.clear()?;
-                    screen_changed = false;
+                    force_clear = false;
                 }
                 self.draw(terminal)?;
                 needs_redraw = false;
             }
-            let prev_screen = std::mem::discriminant(&self.screen);
             match event::poll_event(Duration::from_millis(250))? {
                 AppEvent::Key(key) => {
+                    let was_review = matches!(self.screen, Screen::Review(_));
                     self.handle_key(key)?;
-                    screen_changed = std::mem::discriminant(&self.screen) != prev_screen;
+                    let is_review = matches!(self.screen, Screen::Review(_));
+                    if was_review || is_review {
+                        force_clear = true;
+                    }
                     needs_redraw = true;
                 }
                 AppEvent::Resize(_, _) => {
                     needs_redraw = true;
-                    screen_changed = true;
+                    force_clear = true;
                 }
                 AppEvent::None => {}
             }
@@ -184,10 +165,9 @@ impl App {
     fn draw(&mut self, terminal: &mut Tui) -> Result<()> {
         terminal.draw(|frame| {
             let area = frame.area();
+            Widget::render(Clear, area, frame.buffer_mut());
             match &mut self.screen {
-                Screen::DeckSelect {
-                    decks, state, ..
-                } => {
+                Screen::DeckSelect { decks, state } => {
                     let collapsed = state.collapsed.clone();
                     let screen = DeckSelectScreen {
                         decks,
@@ -205,7 +185,7 @@ impl App {
                         front_lines: &rs.front_lines,
                         back_lines: &rs.back_lines,
                         scroll: rs.scroll,
-                        intervals: rs.intervals,
+                        buttons: &rs.buttons,
                         dry_run: self.review_mode == ReviewMode::DryRun,
                     };
                     Widget::render(screen, area, frame.buffer_mut());
@@ -240,7 +220,7 @@ impl App {
             for img in images {
                 let visible_line = img.line_index as u16;
                 if visible_line >= rs.scroll {
-                    let row = 1 + visible_line - rs.scroll; // +1 for top bar
+                    let row = 1 + visible_line - rs.scroll;
                     let _ = kitty::display_image_at(&img.path, row, 0);
                 }
             }
@@ -255,8 +235,12 @@ impl App {
     }
 
     fn play_current_audio(&self) {
-        let Some(player) = &self.audio_player else { return };
-        let Screen::Review(rs) = &self.screen else { return };
+        let Some(player) = &self.audio_player else {
+            return;
+        };
+        let Screen::Review(rs) = &self.screen else {
+            return;
+        };
         let audio = match rs.phase {
             ReviewPhase::ShowFront => &rs.front_audio,
             ReviewPhase::ShowBack => &rs.back_audio,
@@ -282,11 +266,7 @@ impl App {
         }
 
         match &mut self.screen {
-            Screen::DeckSelect {
-                decks,
-                deck_rows,
-                state,
-            } => {
+            Screen::DeckSelect { decks, state } => {
                 let visible_len = visible_indices(decks, &state.collapsed).len();
                 match key.code {
                     KeyCode::Down | KeyCode::Char('j') => state.next(visible_len),
@@ -295,7 +275,6 @@ impl App {
                         state.toggle_collapse(decks);
                     }
                     KeyCode::Char('h') | KeyCode::Left => {
-                        // Collapse current deck (if expanded) or go to parent
                         if let Some(idx) = state.selected_deck_index(decks) {
                             let name = &decks[idx].name;
                             if !state.collapsed.contains(name) {
@@ -309,17 +288,7 @@ impl App {
                     KeyCode::Enter => {
                         if let Some(idx) = state.selected_deck_index(decks) {
                             let deck_id = decks[idx].id;
-                            let deck_name = decks[idx].name.clone();
-                            // Gather this deck + all child deck IDs
-                            let names: Vec<String> =
-                                deck_rows.iter().map(|d| d.name.replace('\x1f', "::")).collect();
-                            let deck_ids =
-                                queue::gather_deck_ids(deck_id, &deck_name, deck_rows, &names);
-                            let deck_row =
-                                deck_rows.iter().find(|d| d.id == deck_id).cloned();
-                            if let Some(dr) = deck_row {
-                                self.start_review(deck_ids, deck_name, &dr)?;
-                            }
+                            self.start_review(deck_id)?;
                         }
                     }
                     _ => {}
@@ -344,10 +313,22 @@ impl App {
                     _ => {}
                 },
                 ReviewPhase::ShowBack => match key.code {
-                    KeyCode::Char('1') => { self.clear_images(); self.rate_card(Rating::Again)?; }
-                    KeyCode::Char('2') => { self.clear_images(); self.rate_card(Rating::Hard)?; }
-                    KeyCode::Char('3') | KeyCode::Char(' ') => { self.clear_images(); self.rate_card(Rating::Good)?; }
-                    KeyCode::Char('4') => { self.clear_images(); self.rate_card(Rating::Easy)?; }
+                    KeyCode::Char('1') => {
+                        self.clear_images();
+                        self.rate_card(Rating::Again)?;
+                    }
+                    KeyCode::Char('2') => {
+                        self.clear_images();
+                        self.rate_card(Rating::Hard)?;
+                    }
+                    KeyCode::Char('3') | KeyCode::Char(' ') => {
+                        self.clear_images();
+                        self.rate_card(Rating::Good)?;
+                    }
+                    KeyCode::Char('4') => {
+                        self.clear_images();
+                        self.rate_card(Rating::Easy)?;
+                    }
                     KeyCode::Char('r') => {
                         self.play_current_audio();
                     }
@@ -373,149 +354,56 @@ impl App {
     }
 
     fn load_deck_list(&mut self) -> Result<()> {
-        let deck_rows = queries::load_decks(&self.conn)?;
-        let decks = queue::build_deck_list(&self.conn, &self.timing, &deck_rows)?;
+        let decks = self.sidecar.list_decks()?;
         let state = DeckSelectState::new(&decks);
-        self.screen = Screen::DeckSelect {
-            decks,
-            deck_rows,
-            state,
-        };
+        self.screen = Screen::DeckSelect { decks, state };
         Ok(())
     }
 
-    fn start_review(
-        &mut self,
-        deck_ids: Vec<i64>,
-        deck_name: String,
-        deck_row: &DeckRow,
-    ) -> Result<()> {
-        let conf = queue::get_deck_scheduling_config(&self.conn, deck_row)?;
-        let cards = queue::load_review_queue(&self.conn, &deck_ids, &self.timing, &conf)?;
-
-        if cards.is_empty() {
+    fn start_review(&mut self, deck_id: i64) -> Result<()> {
+        let snapshot = self
+            .sidecar
+            .start_review(deck_id, self.review_mode == ReviewMode::DryRun)?;
+        let deck_name = snapshot.deck_name.clone();
+        if let Some(rs) = state_from_snapshot(snapshot, &self.media_dir, 0) {
+            self.screen = Screen::Review(Box::new(rs));
+            self.play_current_audio();
+        } else {
             self.screen = Screen::Done {
                 deck_name,
                 reviewed: 0,
             };
-            return Ok(());
         }
-
-        let (new_remaining, learn_remaining, review_remaining) = queries::deck_due_counts(
-            &self.conn,
-            &deck_ids,
-            self.timing.days_elapsed,
-            self.timing.now_secs,
-        )?;
-
-        let mut rs = ReviewState {
-            deck_name,
-            deck_ids,
-            queue: cards,
-            current_idx: 0,
-            phase: ReviewPhase::ShowFront,
-            scroll: 0,
-            front_lines: Vec::new(),
-            back_lines: Vec::new(),
-            intervals: [0; 4],
-            conf,
-            timer: ReviewTimer::start(),
-            reviewed_count: 0,
-            new_remaining,
-            learn_remaining,
-            review_remaining,
-            front_images: Vec::new(),
-            back_images: Vec::new(),
-            front_audio: Vec::new(),
-            back_audio: Vec::new(),
-        };
-
-        load_card_content(&self.conn, &self.media_dir, &self.timing, &mut rs)?;
-        self.screen = Screen::Review(Box::new(rs));
-        self.play_current_audio();
         Ok(())
     }
 
     fn rate_card(&mut self, rating: Rating) -> Result<()> {
-        let (card, conf, time_ms, deck_ids, deck_name, queue_len, current_idx, reviewed_count) = {
+        let (card_id, deck_id, deck_name, reviewed_count) = {
             let Screen::Review(rs) = &self.screen else {
                 return Ok(());
             };
             (
-                rs.queue[rs.current_idx].clone(),
-                rs.conf.clone(),
-                rs.timer.elapsed_ms(),
-                rs.deck_ids.clone(),
+                rs.card.id,
+                rs.deck_id,
                 rs.deck_name.clone(),
-                rs.queue.len(),
-                rs.current_idx,
                 rs.reviewed_count,
             )
         };
 
-        let (updated_card, revlog) =
-            answer::answer_card(&card, rating, &conf, &self.timing, time_ms);
-        if self.review_mode == ReviewMode::Live {
-            mutations::commit_review(&self.conn, &updated_card, &revlog)?;
-        }
-
-        let next_idx = current_idx + 1;
-        if next_idx >= queue_len {
-            let more_cards =
-                queue::load_review_queue(&self.conn, &deck_ids, &self.timing, &conf)?;
-            if more_cards.is_empty() {
-                self.screen = Screen::Done {
-                    deck_name,
-                    reviewed: reviewed_count + 1,
-                };
-                return Ok(());
-            }
-            let (new_rem, learn_rem, review_rem) = queries::deck_due_counts(
-                &self.conn,
-                &deck_ids,
-                self.timing.days_elapsed,
-                self.timing.now_secs,
-            )?;
-            let mut rs = ReviewState {
-                deck_name,
-                deck_ids,
-                queue: more_cards,
-                current_idx: 0,
-                phase: ReviewPhase::ShowFront,
-                scroll: 0,
-                front_lines: Vec::new(),
-                back_lines: Vec::new(),
-                intervals: [0; 4],
-                conf,
-                timer: ReviewTimer::start(),
-                reviewed_count: reviewed_count + 1,
-                new_remaining: new_rem,
-                learn_remaining: learn_rem,
-                review_remaining: review_rem,
-                front_images: Vec::new(),
-                back_images: Vec::new(),
-                front_audio: Vec::new(),
-                back_audio: Vec::new(),
-            };
-            load_card_content(&self.conn, &self.media_dir, &self.timing, &mut rs)?;
+        let snapshot = self.sidecar.answer_card(card_id, rating)?;
+        let reviewed = reviewed_count + 1;
+        if let Some(rs) = state_from_snapshot(snapshot, &self.media_dir, reviewed) {
             self.screen = Screen::Review(Box::new(rs));
             self.play_current_audio();
         } else {
-            let (new_rem, learn_rem, review_rem) = queries::deck_due_counts(
-                &self.conn,
-                &deck_ids,
-                self.timing.days_elapsed,
-                self.timing.now_secs,
-            )?;
-            let Screen::Review(rs) = &mut self.screen else {
-                return Ok(());
+            self.screen = Screen::Done {
+                deck_name: if deck_name.is_empty() {
+                    deck_id.to_string()
+                } else {
+                    deck_name
+                },
+                reviewed,
             };
-            rs.current_idx = next_idx;
-            rs.reviewed_count += 1;
-            rs.new_remaining = new_rem;
-            rs.learn_remaining = learn_rem;
-            rs.review_remaining = review_rem;
-            load_card_content(&self.conn, &self.media_dir, &self.timing, rs)?;
         }
 
         Ok(())

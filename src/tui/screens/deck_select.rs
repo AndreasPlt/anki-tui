@@ -1,4 +1,4 @@
-use crate::db::models::DeckInfo;
+use crate::sidecar::DeckInfo;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -156,7 +156,9 @@ impl StatefulWidget for DeckSelectScreen<'_> {
             .map(|&idx| {
                 let d = &self.decks[idx];
                 let name_style = Style::default().fg(Color::White);
-                let new_style = Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD);
+                let new_style = Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD);
                 let learn_style = Style::default().fg(Color::Red);
                 let review_style = Style::default().fg(Color::Green);
 
@@ -177,15 +179,19 @@ impl StatefulWidget for DeckSelectScreen<'_> {
                     "  "
                 };
 
+                let reserved_width = indent.chars().count() + collapse_icon.chars().count();
+                let name_width = 38usize.saturating_sub(reserved_width);
+                let display_name = fixed_width(display_name, name_width);
+
                 let line = Line::from(vec![
                     Span::raw(indent),
                     Span::styled(collapse_icon, Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("{display_name:<38}"), name_style),
-                    Span::styled(format!("{:>4}", d.new_count), new_style),
-                    Span::raw(" "),
-                    Span::styled(format!("{:>4}", d.learn_count), learn_style),
-                    Span::raw(" "),
-                    Span::styled(format!("{:>4}", d.review_count), review_style),
+                    Span::styled(display_name, name_style),
+                    Span::styled(format!("{:>5}", d.new_count), new_style),
+                    Span::raw("  "),
+                    Span::styled(format!("{:>5}", d.learn_count), learn_style),
+                    Span::raw("  "),
+                    Span::styled(format!("{:>5}", d.review_count), review_style),
                 ]);
                 ListItem::new(line)
             })
@@ -212,11 +218,19 @@ impl StatefulWidget for DeckSelectScreen<'_> {
             Span::styled(" q ", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled("Quit", Style::default().fg(Color::DarkGray)),
         ]);
-        buf.set_line(
-            footer_area.x + 1,
-            footer_area.y,
-            &footer,
-            footer_area.width,
-        );
+        buf.set_line(footer_area.x + 1, footer_area.y, &footer, footer_area.width);
+    }
+}
+
+fn fixed_width(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len <= width {
+        format!("{text:<width$}")
+    } else if width <= 1 {
+        "…".to_string()
+    } else {
+        let mut out: String = text.chars().take(width - 1).collect();
+        out.push('…');
+        out
     }
 }

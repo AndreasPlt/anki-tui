@@ -1,3 +1,4 @@
+use crate::sidecar::ReviewButton;
 use crate::tui::widgets::card_content::CardContent;
 use crate::tui::widgets::rating_bar::{HintBar, RatingBar};
 use ratatui::buffer::Buffer;
@@ -21,7 +22,7 @@ pub struct ReviewScreen<'a> {
     pub front_lines: &'a [Line<'a>],
     pub back_lines: &'a [Line<'a>],
     pub scroll: u16,
-    pub intervals: [i32; 4],
+    pub buttons: &'a [ReviewButton],
     pub dry_run: bool,
 }
 
@@ -63,7 +64,7 @@ impl Widget for ReviewScreen<'_> {
                 all_lines.extend(self.back_lines.iter().cloned());
 
                 CardContent::new(&all_lines, self.scroll).render(content_area, buf);
-                RatingBar::new(self.intervals).render(bottom_bar, buf);
+                RatingBar::new(self.buttons).render(bottom_bar, buf);
             }
         }
     }
@@ -103,9 +104,7 @@ fn render_top_bar(
         Span::styled("+", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{learn_count}"),
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::styled("+", Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -154,8 +153,8 @@ impl Widget for DoneScreen<'_> {
             )),
         ];
 
-        let p = ratatui::widgets::Paragraph::new(lines)
-            .alignment(ratatui::layout::Alignment::Center);
+        let p =
+            ratatui::widgets::Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
         p.render(center, buf);
     }
 }
