@@ -39,7 +39,7 @@ impl AudioPlayer {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: check if needed for possible future feature
     pub fn stop(&self) {
         self.sink.stop();
     }

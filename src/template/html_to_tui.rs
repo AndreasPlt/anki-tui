@@ -14,7 +14,6 @@ pub struct RenderedContent {
 #[derive(Debug, Clone)]
 pub struct ImageRef {
     pub path: PathBuf,
-    #[allow(dead_code)]
     pub line_index: usize,
 }
 

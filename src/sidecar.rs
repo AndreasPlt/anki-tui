@@ -42,9 +42,7 @@ pub struct ReviewCard {
     pub id: i64,
     pub question_html: String,
     pub answer_html: String,
-    #[allow(dead_code)]
     pub front_audio: Vec<String>,
-    #[allow(dead_code)]
     pub back_audio: Vec<String>,
     pub buttons: Vec<ReviewButton>,
 }

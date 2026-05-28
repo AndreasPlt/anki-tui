@@ -3,7 +3,6 @@ use std::time::Duration;
 
 pub enum AppEvent {
     Key(KeyEvent),
-    #[allow(dead_code)]
     Resize(u16, u16),
     None,
 }
