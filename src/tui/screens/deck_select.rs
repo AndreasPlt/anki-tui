@@ -150,6 +150,9 @@ impl StatefulWidget for DeckSelectScreen<'_> {
         );
 
         // Build visible deck list
+        let table_width = 38 + 5 + 2 + 5 + 2 + 5;
+        let highlight_width = table_width + 2; // account for the highlight symbol
+        let left_pad = list_area.width.saturating_sub(highlight_width as u16) / 2;
         let visible = visible_indices(self.decks, self.collapsed);
         let items: Vec<ListItem> = visible
             .iter()
@@ -184,8 +187,9 @@ impl StatefulWidget for DeckSelectScreen<'_> {
                 let display_name = fixed_width(display_name, name_width);
 
                 let line = Line::from(vec![
+                    Span::raw(" ".repeat(left_pad as usize)),
                     Span::raw(indent),
-                    Span::styled(collapse_icon, Style::default().fg(Color::DarkGray)),
+                    Span::styled(collapse_icon, Style::default().fg(Color::Cyan)),
                     Span::styled(display_name, name_style),
                     Span::styled(format!("{:>5}", d.new_count), new_style),
                     Span::raw("  "),
@@ -200,7 +204,7 @@ impl StatefulWidget for DeckSelectScreen<'_> {
         let list = List::new(items)
             .highlight_style(
                 Style::default()
-                    .bg(Color::DarkGray)
+                    .bg(Color::Rgb(35, 50, 65))
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▸ ");
