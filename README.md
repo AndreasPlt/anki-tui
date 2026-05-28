@@ -15,7 +15,8 @@ Terminal-based flashcard reviewer for local Anki collections. Read and review yo
 
 ## Install
 
-Requires Rust 1.85+ and [`uv`](https://docs.astral.sh/uv/) for the Python sidecar.
+Requires Rust 1.85+ to build and Python 3.10-3.13 at runtime for the Python sidecar.
+`uv` is only used for sidecar development tests; the released TUI does not require it.
 
 ```bash
 git clone <repo-url>
@@ -25,8 +26,23 @@ cargo build --release
 
 Binary at `target/release/anki-tui`.
 
-The first run starts the sidecar with `uv --project sidecar run ...`, which resolves the
-official `anki` Python package into `sidecar/.venv`.
+The sidecar installs Anki's official Python package from a local wheelhouse on first run.
+For development or packaging, create that wheelhouse with:
+
+```bash
+scripts/build-sidecar-wheelhouse.sh
+```
+
+The script chooses Python 3.13, 3.12, 3.11, or 3.10 in the same order as the TUI. To force a
+specific supported interpreter, run `PYTHON=/path/to/python3.13 scripts/build-sidecar-wheelhouse.sh`.
+
+By default the app looks for wheels in `$XDG_DATA_HOME/anki-tui/wheels`, then
+`~/.local/share/anki-tui/wheels`, then an install-relative `share/anki-tui/wheels`, and finally
+`sidecar/wheels` in the source tree. Set `ANKI_TUI_WHEELHOUSE_DIR` to override this.
+
+The first run creates a managed virtual environment under `$XDG_DATA_HOME/anki-tui/sidecar` or,
+if `XDG_DATA_HOME` is unset, `~/.local/share/anki-tui/sidecar`. Set
+`ANKI_TUI_SIDECAR_HOME` to override this.
 
 ## Usage
 
@@ -71,7 +87,7 @@ anki-tui --dry-run
 
 ## How It Works
 
-- Starts a `uv`-managed Python sidecar next to the Rust TUI
+- Starts a managed Python sidecar environment from bundled wheels
 - The sidecar opens the collection with Anki's official Python package
 - Deck counts, rendered card HTML, interval labels, and answers come from Anki's scheduler
 - Converts HTML to styled terminal text via `scraper` + `ratatui`
@@ -79,11 +95,18 @@ anki-tui --dry-run
 
 ## Limitations
 
-- Requires a working `uv` installation and a compatible official `anki` Python package
+- Requires Python 3.10-3.13 and an offline wheelhouse containing the compatible official `anki` Python package
 - Do not keep Anki Desktop open on the same collection while using live review mode
 - `--dry-run` is a no-write preview; it advances through queued cards for the session but does not simulate all future scheduler transitions
 - Undo is not implemented in the TUI
 
 ## Dependencies
 
-ratatui, crossterm, scraper, rodio, image, base64, thiserror, serde, serde_json, dirs, plus the `uv` sidecar dependencies in `sidecar/pyproject.toml`
+ratatui, crossterm, scraper, rodio, image, base64, thiserror, serde, serde_json, dirs, plus the sidecar wheels generated from `sidecar/pyproject.toml` / `anki==25.9.4`.
+
+Useful sidecar overrides:
+
+- `ANKI_TUI_SIDECAR_CMD`: run a fully custom sidecar command
+- `ANKI_TUI_PYTHON`: choose the Python executable used to create the managed venv
+- `ANKI_TUI_SIDECAR_HOME`: choose where the managed venv and sidecar script are stored
+- `ANKI_TUI_WHEELHOUSE_DIR`: choose where offline wheels are read from

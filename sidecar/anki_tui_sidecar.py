@@ -43,7 +43,7 @@ class AnkiEngine:
         except Exception as exc:  # pragma: no cover - depends on local env
             raise SidecarError(
                 "missing_dependency",
-                "Python package 'anki' is not available. Run the sidecar through 'uv run'.",
+                "Python package 'anki' is not available in the sidecar environment. Rebuild the sidecar wheelhouse or remove the managed sidecar venv.",
             ) from exc
 
         path = Path(collection_path).expanduser()
