@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 pub struct RenderedContent {
     pub lines: Vec<Line<'static>>,
     pub images: Vec<ImageRef>,
+    pub audio: Vec<AudioRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -17,11 +18,17 @@ pub struct ImageRef {
     pub line_index: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct AudioRef {
+    pub path: PathBuf,
+}
+
 struct RenderState {
     lines: Vec<Line<'static>>,
     current_spans: Vec<Span<'static>>,
     style_stack: Vec<Style>,
     images: Vec<ImageRef>,
+    audio: Vec<AudioRef>,
     media_dir: PathBuf,
 }
 
@@ -68,6 +75,7 @@ pub fn html_to_lines(html: &str, media_dir: &Path) -> RenderedContent {
         current_spans: Vec::new(),
         style_stack: vec![Style::default()],
         images: Vec::new(),
+        audio: Vec::new(),
         media_dir: media_dir.to_path_buf(),
     };
 
@@ -82,6 +90,7 @@ pub fn html_to_lines(html: &str, media_dir: &Path) -> RenderedContent {
     RenderedContent {
         lines: state.lines,
         images: state.images,
+        audio: state.audio,
     }
 }
 
@@ -92,7 +101,8 @@ fn walk_tree(node_ref: NodeRef<'_, Node>, state: &mut RenderState) {
                 .chars()
                 .map(|c| if c.is_whitespace() { ' ' } else { c })
                 .collect();
-            state.push_text(&collapsed);
+            // Extract [sound:filename] references
+            process_text_with_sound(&collapsed, state);
         }
         Node::Element(el) => {
             let tag = el.name.local.as_ref();
@@ -244,6 +254,36 @@ fn walk_tree(node_ref: NodeRef<'_, Node>, state: &mut RenderState) {
             }
         }
         _ => {}
+    }
+}
+
+/// Process text, extracting `[sound:filename]` references into AudioRef entries.
+fn process_text_with_sound(text: &str, state: &mut RenderState) {
+    let mut remaining = text;
+    while let Some(start) = remaining.find("[sound:") {
+        // Push text before the sound tag
+        if start > 0 {
+            state.push_text(&remaining[..start]);
+        }
+        let after = &remaining[start + 7..]; // skip "[sound:"
+        if let Some(end) = after.find(']') {
+            let filename = &after[..end];
+            let path = state.media_dir.join(filename);
+            state.audio.push(AudioRef { path });
+            // Show a styled placeholder
+            let style = Style::default().fg(Color::DarkGray);
+            state
+                .current_spans
+                .push(Span::styled(format!("[audio: {filename}]"), style));
+            remaining = &after[end + 1..];
+        } else {
+            // Malformed — push rest as text
+            state.push_text(&remaining[start..]);
+            return;
+        }
+    }
+    if !remaining.is_empty() {
+        state.push_text(remaining);
     }
 }
 

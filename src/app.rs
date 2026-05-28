@@ -35,6 +35,7 @@ pub struct App {
     should_quit: bool,
     kitty_supported: bool,
     review_mode: ReviewMode,
+    audio_player: Option<crate::media::audio::AudioPlayer>,
 }
 
 enum Screen {
@@ -43,7 +44,7 @@ enum Screen {
         deck_rows: Vec<DeckRow>,
         state: DeckSelectState,
     },
-    Review(ReviewState),
+    Review(Box<ReviewState>),
     Done {
         deck_name: String,
         reviewed: u32,
@@ -68,6 +69,8 @@ struct ReviewState {
     review_remaining: u32,
     front_images: Vec<html_to_tui::ImageRef>,
     back_images: Vec<html_to_tui::ImageRef>,
+    front_audio: Vec<html_to_tui::AudioRef>,
+    back_audio: Vec<html_to_tui::AudioRef>,
 }
 
 fn load_card_content(
@@ -91,12 +94,14 @@ fn load_card_content(
     let front_rendered = html_to_tui::html_to_lines(&front_html, media_dir);
     rs.front_lines = front_rendered.lines;
     rs.front_images = front_rendered.images;
+    rs.front_audio = front_rendered.audio;
 
     let back_html =
         render::render_template(&tmpl_config.afmt, &field_map, Some(&front_html), card.ord);
     let back_rendered = html_to_tui::html_to_lines(&back_html, media_dir);
     rs.back_lines = back_rendered.lines;
     rs.back_images = back_rendered.images;
+    rs.back_audio = back_rendered.audio;
 
     // Only compute days_late for review cards (due is a day number)
     let days_late = if card.queue == 2 {
@@ -140,6 +145,7 @@ impl App {
             should_quit: false,
             kitty_supported: kitty::is_kitty_supported(),
             review_mode,
+            audio_player: crate::media::audio::AudioPlayer::new(),
         })
     }
 
@@ -240,6 +246,19 @@ impl App {
         }
     }
 
+    fn play_current_audio(&self) {
+        let Some(player) = &self.audio_player else { return };
+        let Screen::Review(rs) = &self.screen else { return };
+        let audio = match rs.phase {
+            ReviewPhase::ShowFront => &rs.front_audio,
+            ReviewPhase::ShowBack => &rs.back_audio,
+        };
+        let paths: Vec<&std::path::Path> = audio.iter().map(|a| a.path.as_path()).collect();
+        if !paths.is_empty() {
+            player.play(&paths);
+        }
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         if event::is_quit(&key) {
             match &self.screen {
@@ -303,6 +322,10 @@ impl App {
                     KeyCode::Char(' ') | KeyCode::Enter => {
                         rs.phase = ReviewPhase::ShowBack;
                         rs.scroll = 0;
+                        self.play_current_audio();
+                    }
+                    KeyCode::Char('r') => {
+                        self.play_current_audio();
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
                         rs.scroll = rs.scroll.saturating_add(1);
@@ -317,6 +340,9 @@ impl App {
                     KeyCode::Char('2') => { self.clear_images(); self.rate_card(Rating::Hard)?; }
                     KeyCode::Char('3') | KeyCode::Char(' ') => { self.clear_images(); self.rate_card(Rating::Good)?; }
                     KeyCode::Char('4') => { self.clear_images(); self.rate_card(Rating::Easy)?; }
+                    KeyCode::Char('r') => {
+                        self.play_current_audio();
+                    }
                     KeyCode::Down | KeyCode::Char('j') => {
                         if let Screen::Review(rs) = &mut self.screen {
                             rs.scroll = rs.scroll.saturating_add(1);
@@ -392,10 +418,13 @@ impl App {
             review_remaining,
             front_images: Vec::new(),
             back_images: Vec::new(),
+            front_audio: Vec::new(),
+            back_audio: Vec::new(),
         };
 
         load_card_content(&self.conn, &self.media_dir, &self.timing, &mut rs)?;
-        self.screen = Screen::Review(rs);
+        self.screen = Screen::Review(Box::new(rs));
+        self.play_current_audio();
         Ok(())
     }
 
@@ -457,9 +486,12 @@ impl App {
                 review_remaining: review_rem,
                 front_images: Vec::new(),
                 back_images: Vec::new(),
+                front_audio: Vec::new(),
+                back_audio: Vec::new(),
             };
             load_card_content(&self.conn, &self.media_dir, &self.timing, &mut rs)?;
-            self.screen = Screen::Review(rs);
+            self.screen = Screen::Review(Box::new(rs));
+            self.play_current_audio();
         } else {
             let (new_rem, learn_rem, review_rem) = queries::deck_due_counts(
                 &self.conn,
