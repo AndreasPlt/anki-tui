@@ -1,2 +1,4 @@
 /target
 /tests/fixtures/*.anki2
+/tests/fixtures/*.anki2-shm
+/tests/fixtures/*.anki2-wal

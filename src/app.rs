@@ -11,7 +11,7 @@ use crate::scheduler::sm2::{self, Rating};
 use crate::scheduler::timing::{self, SchedTiming};
 use crate::template::{html_to_tui, render};
 use crate::tui::event::{self, AppEvent};
-use crate::tui::screens::deck_select::{DeckSelectScreen, DeckSelectState};
+use crate::tui::screens::deck_select::{visible_indices, DeckSelectScreen, DeckSelectState};
 use crate::tui::screens::review::{DoneScreen, ReviewPhase, ReviewScreen};
 use crate::tui::terminal::Tui;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -45,7 +45,7 @@ enum Screen {
 
 struct ReviewState {
     deck_name: String,
-    deck_id: i64,
+    deck_ids: Vec<i64>,
     queue: Vec<CardRow>,
     current_idx: usize,
     phase: ReviewPhase,
@@ -128,7 +128,7 @@ impl App {
             screen: Screen::DeckSelect {
                 decks: Vec::new(),
                 deck_rows: Vec::new(),
-                state: DeckSelectState::new(0),
+                state: DeckSelectState::new(&[]),
             },
             should_quit: false,
             kitty_supported: kitty::is_kitty_supported(),
@@ -166,7 +166,11 @@ impl App {
                 Screen::DeckSelect {
                     decks, state, ..
                 } => {
-                    let screen = DeckSelectScreen { decks };
+                    let collapsed = state.collapsed.clone();
+                    let screen = DeckSelectScreen {
+                        decks,
+                        collapsed: &collapsed,
+                    };
                     StatefulWidget::render(screen, area, frame.buffer_mut(), state);
                 }
                 Screen::Review(rs) => {
@@ -247,17 +251,38 @@ impl App {
                 deck_rows,
                 state,
             } => {
-                let len = decks.len();
+                let visible_len = visible_indices(decks, &state.collapsed).len();
                 match key.code {
-                    KeyCode::Down | KeyCode::Char('j') => state.next(len),
-                    KeyCode::Up | KeyCode::Char('k') => state.previous(len),
+                    KeyCode::Down | KeyCode::Char('j') => state.next(visible_len),
+                    KeyCode::Up | KeyCode::Char('k') => state.previous(visible_len),
+                    KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
+                        state.toggle_collapse(decks);
+                    }
+                    KeyCode::Char('h') | KeyCode::Left => {
+                        // Collapse current deck (if expanded) or go to parent
+                        if let Some(idx) = state.selected_deck_index(decks) {
+                            let name = &decks[idx].name;
+                            if !state.collapsed.contains(name) {
+                                let prefix = format!("{name}::");
+                                if decks.iter().any(|d| d.name.starts_with(&prefix)) {
+                                    state.collapsed.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
                     KeyCode::Enter => {
-                        if let Some(idx) = state.selected() {
+                        if let Some(idx) = state.selected_deck_index(decks) {
                             let deck_id = decks[idx].id;
                             let deck_name = decks[idx].name.clone();
-                            let deck_row = deck_rows.iter().find(|d| d.id == deck_id).cloned();
+                            // Gather this deck + all child deck IDs
+                            let names: Vec<String> =
+                                deck_rows.iter().map(|d| d.name.replace('\x1f', "::")).collect();
+                            let deck_ids =
+                                queue::gather_deck_ids(deck_id, &deck_name, deck_rows, &names);
+                            let deck_row =
+                                deck_rows.iter().find(|d| d.id == deck_id).cloned();
                             if let Some(dr) = deck_row {
-                                self.start_review(deck_id, deck_name, &dr)?;
+                                self.start_review(deck_ids, deck_name, &dr)?;
                             }
                         }
                     }
@@ -307,23 +332,23 @@ impl App {
     fn load_deck_list(&mut self) -> Result<()> {
         let deck_rows = queries::load_decks(&self.conn)?;
         let decks = queue::build_deck_list(&self.conn, &self.timing, &deck_rows)?;
-        let len = decks.len();
+        let state = DeckSelectState::new(&decks);
         self.screen = Screen::DeckSelect {
             decks,
             deck_rows,
-            state: DeckSelectState::new(len),
+            state,
         };
         Ok(())
     }
 
     fn start_review(
         &mut self,
-        deck_id: i64,
+        deck_ids: Vec<i64>,
         deck_name: String,
         deck_row: &DeckRow,
     ) -> Result<()> {
         let conf = queue::get_deck_scheduling_config(&self.conn, deck_row)?;
-        let cards = queue::load_review_queue(&self.conn, deck_id, &self.timing, &conf)?;
+        let cards = queue::load_review_queue(&self.conn, &deck_ids, &self.timing, &conf)?;
 
         if cards.is_empty() {
             self.screen = Screen::Done {
@@ -335,14 +360,14 @@ impl App {
 
         let (new_remaining, learn_remaining, review_remaining) = queries::deck_due_counts(
             &self.conn,
-            deck_id,
+            &deck_ids,
             self.timing.days_elapsed,
             self.timing.now_secs,
         )?;
 
         let mut rs = ReviewState {
             deck_name,
-            deck_id,
+            deck_ids,
             queue: cards,
             current_idx: 0,
             phase: ReviewPhase::ShowFront,
@@ -366,7 +391,7 @@ impl App {
     }
 
     fn rate_card(&mut self, rating: Rating) -> Result<()> {
-        let (card, conf, time_ms, deck_id, deck_name, queue_len, current_idx, reviewed_count) = {
+        let (card, conf, time_ms, deck_ids, deck_name, queue_len, current_idx, reviewed_count) = {
             let Screen::Review(rs) = &self.screen else {
                 return Ok(());
             };
@@ -374,7 +399,7 @@ impl App {
                 rs.queue[rs.current_idx].clone(),
                 rs.conf.clone(),
                 rs.timer.elapsed_ms(),
-                rs.deck_id,
+                rs.deck_ids.clone(),
                 rs.deck_name.clone(),
                 rs.queue.len(),
                 rs.current_idx,
@@ -389,7 +414,7 @@ impl App {
         let next_idx = current_idx + 1;
         if next_idx >= queue_len {
             let more_cards =
-                queue::load_review_queue(&self.conn, deck_id, &self.timing, &conf)?;
+                queue::load_review_queue(&self.conn, &deck_ids, &self.timing, &conf)?;
             if more_cards.is_empty() {
                 self.screen = Screen::Done {
                     deck_name,
@@ -399,13 +424,13 @@ impl App {
             }
             let (new_rem, learn_rem, review_rem) = queries::deck_due_counts(
                 &self.conn,
-                deck_id,
+                &deck_ids,
                 self.timing.days_elapsed,
                 self.timing.now_secs,
             )?;
             let mut rs = ReviewState {
                 deck_name,
-                deck_id,
+                deck_ids,
                 queue: more_cards,
                 current_idx: 0,
                 phase: ReviewPhase::ShowFront,
@@ -427,7 +452,7 @@ impl App {
         } else {
             let (new_rem, learn_rem, review_rem) = queries::deck_due_counts(
                 &self.conn,
-                deck_id,
+                &deck_ids,
                 self.timing.days_elapsed,
                 self.timing.now_secs,
             )?;

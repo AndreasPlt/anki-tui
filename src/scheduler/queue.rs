@@ -8,24 +8,50 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 
 /// Build the list of decks with their due counts.
+/// Parent decks include counts from all children.
 pub fn build_deck_list(
     conn: &Connection,
     timing: &SchedTiming,
     deck_rows: &[DeckRow],
 ) -> Result<Vec<DeckInfo>> {
+    let names: Vec<String> = deck_rows
+        .iter()
+        .map(|d| d.name.replace('\x1f', "::"))
+        .collect();
+
     let mut infos = Vec::new();
-    for deck in deck_rows {
+    for (i, deck) in deck_rows.iter().enumerate() {
+        let deck_name = &names[i];
+        // Collect this deck + all child deck IDs
+        let deck_ids = gather_deck_ids(deck.id, deck_name, deck_rows, &names);
         let (new, learn, review) =
-            queries::deck_due_counts(conn, deck.id, timing.days_elapsed, timing.now_secs)?;
+            queries::deck_due_counts(conn, &deck_ids, timing.days_elapsed, timing.now_secs)?;
         infos.push(DeckInfo {
             id: deck.id,
-            name: deck.name.replace('\x1f', "::"),
+            name: deck_name.clone(),
             new_count: new,
             learn_count: learn,
             review_count: review,
         });
     }
     Ok(infos)
+}
+
+/// Collect deck IDs for a deck and all its children.
+pub fn gather_deck_ids(
+    deck_id: i64,
+    deck_name: &str,
+    deck_rows: &[DeckRow],
+    names: &[String],
+) -> Vec<i64> {
+    let prefix = format!("{deck_name}::");
+    let mut ids = vec![deck_id];
+    for (i, name) in names.iter().enumerate() {
+        if name.starts_with(&prefix) {
+            ids.push(deck_rows[i].id);
+        }
+    }
+    ids
 }
 
 /// Load the scheduling config for a deck by resolving its config_id.
@@ -49,16 +75,16 @@ pub fn get_deck_scheduling_config(
     }
 }
 
-/// Load the review queue for a deck.
+/// Load the review queue for a deck and all its children.
 pub fn load_review_queue(
     conn: &Connection,
-    deck_id: i64,
+    deck_ids: &[i64],
     timing: &SchedTiming,
     conf: &DeckSchedulingConfig,
 ) -> Result<Vec<CardRow>> {
     queries::load_due_cards(
         conn,
-        deck_id,
+        deck_ids,
         timing.days_elapsed,
         timing.now_secs,
         conf.new_per_day,
