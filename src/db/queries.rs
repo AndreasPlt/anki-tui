@@ -11,7 +11,7 @@ pub fn load_decks(conn: &Connection) -> Result<Vec<DeckRow>> {
             kind: row.get(2)?,
         })
     })?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
 pub fn load_deck_configs(conn: &Connection) -> Result<Vec<DeckConfigRow>> {
@@ -23,7 +23,7 @@ pub fn load_deck_configs(conn: &Connection) -> Result<Vec<DeckConfigRow>> {
             config: row.get(2)?,
         })
     })?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
 /// Build a SQL `IN (?, ?, ...)` clause for a set of deck IDs.
@@ -61,11 +61,14 @@ pub fn deck_due_counts(
 
     let learn: u32 = {
         let sql = format!(
-            "SELECT COUNT(*) FROM cards WHERE did IN {in_cl} AND (queue = 1 OR queue = 3) AND due <= ?"
+            "SELECT COUNT(*) FROM cards WHERE did IN {in_cl} AND \
+             ((queue = 1 AND due <= ?) OR (queue = 3 AND due <= ?))"
         );
         let mut stmt = conn.prepare(&sql)?;
         bind_deck_ids(&mut stmt, deck_ids, 1)?;
-        stmt.raw_bind_parameter(deck_ids.len() + 1, now_secs)?;
+        let off = deck_ids.len() + 1;
+        stmt.raw_bind_parameter(off, now_secs)?;
+        stmt.raw_bind_parameter(off + 1, today)?;
         stmt.raw_query().next()?.unwrap().get(0)?
     };
 
@@ -208,7 +211,7 @@ pub fn load_template(conn: &Connection, ntid: i64, ord: i32) -> Result<TemplateR
 pub fn load_field_names(conn: &Connection, ntid: i64) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT name FROM fields WHERE ntid = ? ORDER BY ord")?;
     let rows = stmt.query_map([ntid], |row| row.get::<_, String>(0))?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
 pub fn load_notetype(conn: &Connection, ntid: i64) -> Result<NotetypeRow> {

@@ -2,6 +2,7 @@ use super::decode::{decode_fields, get_string};
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TemplateConfig {
     pub qfmt: String,
     pub afmt: String,

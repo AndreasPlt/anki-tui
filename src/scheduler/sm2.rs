@@ -10,6 +10,7 @@ pub enum Rating {
 }
 
 impl Rating {
+    #[allow(dead_code)]
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
             1 => Some(Rating::Again),
@@ -20,6 +21,7 @@ impl Rating {
         }
     }
 
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             Rating::Again => "Again",
@@ -52,21 +54,21 @@ pub fn review_interval(
         Rating::Hard => {
             let hard_mult = conf.hard_multiplier as f64;
             let raw = (current_ivl as f64 * hard_mult * mult).round() as i32;
-            let new_ivl = fuzz_interval(raw.max(current_ivl + 1).min(max_ivl));
+            let new_ivl = fuzz_interval(raw.max(current_ivl + 1)).min(max_ivl);
             let new_factor = (factor - 150).max(1300);
             (new_ivl, new_factor)
         }
         Rating::Good => {
             let raw =
                 ((current_ivl as f64 + days_late as f64 / 2.0) * ease * mult).round() as i32;
-            let new_ivl = fuzz_interval(raw.max(current_ivl + 1).min(max_ivl));
+            let new_ivl = fuzz_interval(raw.max(current_ivl + 1)).min(max_ivl);
             (new_ivl, factor)
         }
         Rating::Easy => {
             let easy_mult = conf.easy_multiplier as f64;
             let raw = ((current_ivl as f64 + days_late as f64) * ease * easy_mult * mult).round()
                 as i32;
-            let new_ivl = fuzz_interval(raw.max(current_ivl + 1).min(max_ivl));
+            let new_ivl = fuzz_interval(raw.max(current_ivl + 1)).min(max_ivl);
             let new_factor = factor + 150;
             (new_ivl, new_factor)
         }
@@ -185,5 +187,85 @@ pub fn format_interval(ivl: i32) -> String {
         format!("{:.1}mo", ivl as f64 / 30.0)
     } else {
         format!("{:.1}y", ivl as f64 / 365.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_conf() -> DeckSchedulingConfig {
+        DeckSchedulingConfig::default()
+    }
+
+    #[test]
+    fn again_uses_minimum_lapse_interval() {
+        let conf = DeckSchedulingConfig {
+            minimum_lapse_interval: 3,
+            ..default_conf()
+        };
+        let (ivl, factor) = review_interval(30, 2500, 0, Rating::Again, &conf);
+        assert_eq!(ivl, 3);
+        assert_eq!(factor, 2300); // 2500 - 200
+    }
+
+    #[test]
+    fn again_factor_floor_at_1300() {
+        let (_, factor) = review_interval(10, 1400, 0, Rating::Again, &default_conf());
+        assert_eq!(factor, 1300); // max(1400 - 200, 1300)
+    }
+
+    #[test]
+    fn hard_increases_interval() {
+        let (ivl, factor) = review_interval(10, 2500, 0, Rating::Hard, &default_conf());
+        // raw = 10 * 1.2 * 1.0 = 12, max(12, 11) = 12, fuzz(12) ≈ 10-14
+        assert!((10..=15).contains(&ivl));
+        assert_eq!(factor, 2350); // 2500 - 150
+    }
+
+    #[test]
+    fn good_preserves_factor() {
+        let conf = default_conf();
+        let (_, factor) = review_interval(10, 2500, 0, Rating::Good, &conf);
+        assert_eq!(factor, 2500); // unchanged
+    }
+
+    #[test]
+    fn easy_increases_factor() {
+        let conf = default_conf();
+        let (_, factor) = review_interval(10, 2500, 0, Rating::Easy, &conf);
+        assert_eq!(factor, 2650); // 2500 + 150
+    }
+
+    #[test]
+    fn no_fuzz_for_small_intervals() {
+        // ivl < 3 → no fuzz applied
+        let ivl = fuzz_interval(2);
+        assert_eq!(ivl, 2);
+        let ivl = fuzz_interval(1);
+        assert_eq!(ivl, 1);
+    }
+
+    #[test]
+    fn interval_capped_at_maximum() {
+        let conf = DeckSchedulingConfig {
+            maximum_review_interval: 100,
+            ..default_conf()
+        };
+        let (ivl, _) = review_interval(50, 2500, 100, Rating::Easy, &conf);
+        assert!(ivl <= 100);
+    }
+
+    #[test]
+    fn format_interval_seconds() {
+        assert_eq!(format_interval(-30), "30s");
+        assert_eq!(format_interval(-120), "2m");
+    }
+
+    #[test]
+    fn format_interval_days_months_years() {
+        assert_eq!(format_interval(1), "1d");
+        assert_eq!(format_interval(15), "15d");
+        assert_eq!(format_interval(365), "1.0y");
     }
 }

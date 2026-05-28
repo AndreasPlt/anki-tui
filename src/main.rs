@@ -14,8 +14,13 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     let (collection_path, media_dir) = resolve_paths(&args)?;
+    let review_mode = if args.iter().any(|a| a == "--dry-run") {
+        app::ReviewMode::DryRun
+    } else {
+        app::ReviewMode::Live
+    };
 
-    let mut app = app::App::new(&collection_path, media_dir)?;
+    let mut app = app::App::new(&collection_path, media_dir, review_mode)?;
     let mut terminal = tui::terminal::init().map_err(error::Error::Io)?;
 
     let result = app.run(&mut terminal);

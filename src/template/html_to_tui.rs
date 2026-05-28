@@ -13,6 +13,7 @@ pub struct RenderedContent {
 #[derive(Debug, Clone)]
 pub struct ImageRef {
     pub path: PathBuf,
+    #[allow(dead_code)]
     pub line_index: usize,
 }
 
@@ -158,20 +159,20 @@ fn walk_tree(node_ref: NodeRef<'_, Node>, state: &mut RenderState) {
                     state.flush_line();
                     let mut idx = 0;
                     for child in node_ref.children() {
-                        if let Node::Element(child_el) = child.value() {
-                            if child_el.name.local.as_ref() == "li" {
-                                idx += 1;
-                                let prefix = if tag == "ol" {
-                                    format!(" {idx}. ")
-                                } else {
-                                    " - ".to_string()
-                                };
-                                state.push_text(&prefix);
-                                for li_child in child.children() {
-                                    walk_tree(li_child, state);
-                                }
-                                state.flush_line();
+                        if let Node::Element(child_el) = child.value()
+                            && child_el.name.local.as_ref() == "li"
+                        {
+                            idx += 1;
+                            let prefix = if tag == "ol" {
+                                format!(" {idx}. ")
+                            } else {
+                                " - ".to_string()
+                            };
+                            state.push_text(&prefix);
+                            for li_child in child.children() {
+                                walk_tree(li_child, state);
                             }
+                            state.flush_line();
                         }
                     }
                     return;
@@ -249,10 +250,10 @@ fn walk_tree(node_ref: NodeRef<'_, Node>, state: &mut RenderState) {
 fn parse_element_style(el: &scraper::node::Element) -> Style {
     let mut style = Style::default();
 
-    if let Some(color_attr) = el.attr("color") {
-        if let Some(color) = parse_color(color_attr) {
-            style = style.fg(color);
-        }
+    if let Some(color_attr) = el.attr("color")
+        && let Some(color) = parse_color(color_attr)
+    {
+        style = style.fg(color);
     }
 
     if let Some(style_attr) = el.attr("style") {
@@ -293,10 +294,10 @@ fn parse_element_style(el: &scraper::node::Element) -> Style {
         }
     }
 
-    if let Some(classes) = el.attr("class") {
-        if classes.split_whitespace().any(|c| c == "cloze") {
-            style = style.fg(Color::Blue).add_modifier(Modifier::BOLD);
-        }
+    if let Some(classes) = el.attr("class")
+        && classes.split_whitespace().any(|c| c == "cloze")
+    {
+        style = style.fg(Color::Blue).add_modifier(Modifier::BOLD);
     }
 
     style
@@ -322,8 +323,7 @@ fn parse_color(s: &str) -> Option<Color> {
         _ => {}
     }
 
-    if s.starts_with('#') {
-        let hex = &s[1..];
+    if let Some(hex) = s.strip_prefix('#') {
         return match hex.len() {
             3 => {
                 let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;

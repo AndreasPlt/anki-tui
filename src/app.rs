@@ -21,6 +21,12 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewMode {
+    Live,
+    DryRun,
+}
+
 pub struct App {
     conn: Connection,
     media_dir: PathBuf,
@@ -28,6 +34,7 @@ pub struct App {
     screen: Screen,
     should_quit: bool,
     kitty_supported: bool,
+    review_mode: ReviewMode,
 }
 
 enum Screen {
@@ -115,7 +122,7 @@ fn load_card_content(
 }
 
 impl App {
-    pub fn new(collection_path: &Path, media_dir: PathBuf) -> Result<Self> {
+    pub fn new(collection_path: &Path, media_dir: PathBuf, review_mode: ReviewMode) -> Result<Self> {
         let conn = crate::db::connection::open_collection(collection_path)?;
         let creation_secs = queries::get_collection_creation_time(&conn)?;
         let offset_mins = queries::get_creation_offset_mins(&conn).unwrap_or(0);
@@ -132,6 +139,7 @@ impl App {
             },
             should_quit: false,
             kitty_supported: kitty::is_kitty_supported(),
+            review_mode,
         })
     }
 
@@ -184,6 +192,7 @@ impl App {
                         back_lines: &rs.back_lines,
                         scroll: rs.scroll,
                         intervals: rs.intervals,
+                        dry_run: self.review_mode == ReviewMode::DryRun,
                     };
                     Widget::render(screen, area, frame.buffer_mut());
                 }
@@ -409,7 +418,9 @@ impl App {
 
         let (updated_card, revlog) =
             answer::answer_card(&card, rating, &conf, &self.timing, time_ms);
-        mutations::commit_review(&self.conn, &updated_card, &revlog)?;
+        if self.review_mode == ReviewMode::Live {
+            mutations::commit_review(&self.conn, &updated_card, &revlog)?;
+        }
 
         let next_idx = current_idx + 1;
         if next_idx >= queue_len {

@@ -14,12 +14,6 @@ pub enum Error {
     #[error("protobuf decode error: {0}")]
     ProtoDecode(String),
 
-    #[error("template error: {0}")]
-    Template(String),
-
-    #[error("no cards due in this deck")]
-    NoDueCards,
-
     #[error("collection not found at {0}")]
     CollectionNotFound(PathBuf),
 }

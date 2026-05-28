@@ -45,7 +45,8 @@ pub fn answer_card(
         // Learning / day-learning
         1 | 3 => {
             let last = if card.ivl < 0 { card.ivl } else { -card.ivl * 86400 };
-            answer_learning(&mut new, rating, conf, timing, false);
+            let is_relearn = card.ctype == 3;
+            answer_learning(&mut new, rating, conf, timing, is_relearn);
             (0, last)
         }
         // Review
@@ -70,7 +71,7 @@ pub fn answer_card(
         usn: -1,
         ease: rating as i32,
         ivl: new.ivl,
-        last_ivl: last_ivl,
+        last_ivl,
         factor: new.factor,
         time: time_ms,
         review_type: revlog_type,
@@ -243,4 +244,105 @@ fn encode_left(remaining: usize, total_today: usize) -> i32 {
 
 fn remaining_steps(left: i32) -> usize {
     (left % 1000) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::deck_config::DeckSchedulingConfig;
+
+    fn test_timing() -> SchedTiming {
+        SchedTiming {
+            now_secs: 1700000000,
+            days_elapsed: 1000,
+            next_day_at: 1700086400,
+        }
+    }
+
+    fn test_conf() -> DeckSchedulingConfig {
+        DeckSchedulingConfig {
+            learn_steps_mins: vec![1.0, 10.0],
+            relearn_steps_mins: vec![5.0],
+            ..DeckSchedulingConfig::default()
+        }
+    }
+
+    fn review_card() -> CardRow {
+        CardRow {
+            id: 1, nid: 1, did: 1, ord: 0, mod_: 0, usn: 0,
+            ctype: 2, queue: 2, due: 990, ivl: 30, factor: 2500,
+            reps: 5, lapses: 0, left: 0, odue: 0, odid: 0, flags: 0,
+            data: String::new(),
+        }
+    }
+
+    #[test]
+    fn review_again_enters_relearning_with_relearn_steps() {
+        let conf = test_conf();
+        let timing = test_timing();
+        let card = review_card();
+
+        let (new_card, revlog) = answer_card(&card, Rating::Again, &conf, &timing, 5000);
+
+        // Card should become relearning
+        assert_eq!(new_card.ctype, 3, "ctype should be 3 (relearn)");
+        assert_eq!(new_card.queue, 1, "queue should be 1 (learning)");
+        assert_eq!(new_card.lapses, 1, "lapses should increment");
+        // Due should be now + relearn step (5 min = 300 sec)
+        assert_eq!(new_card.due, timing.now_secs + 300);
+        // Revlog type should be 2 (relearn)
+        assert_eq!(revlog.review_type, 2);
+    }
+
+    #[test]
+    fn relearning_card_uses_relearn_steps_not_learn_steps() {
+        let conf = test_conf();
+        let timing = test_timing();
+        // A card already in relearning state
+        let card = CardRow {
+            ctype: 3, queue: 1, due: timing.now_secs - 10,
+            ivl: 5, factor: 2300, left: encode_left(1, 1),
+            ..review_card()
+        };
+
+        let (new_card, _) = answer_card(&card, Rating::Again, &conf, &timing, 3000);
+
+        // Should use relearn step 0 (5 min = 300s), NOT learn step 0 (1 min = 60s)
+        assert_eq!(new_card.due, timing.now_secs + 300);
+    }
+
+    #[test]
+    fn new_card_good_with_two_steps_enters_learning() {
+        let conf = test_conf();
+        let timing = test_timing();
+        let card = CardRow {
+            ctype: 0, queue: 0, due: 0, ivl: 0, factor: 0,
+            reps: 0, lapses: 0, left: 0,
+            ..review_card()
+        };
+
+        let (new_card, _) = answer_card(&card, Rating::Good, &conf, &timing, 1000);
+
+        // With 2 learn steps, Good goes to step 1 (10 min = 600s)
+        assert_eq!(new_card.ctype, 1, "should be learning");
+        assert_eq!(new_card.queue, 1);
+        assert_eq!(new_card.due, timing.now_secs + 600);
+    }
+
+    #[test]
+    fn new_card_easy_graduates_immediately() {
+        let conf = test_conf();
+        let timing = test_timing();
+        let card = CardRow {
+            ctype: 0, queue: 0, due: 0, ivl: 0, factor: 0,
+            reps: 0, lapses: 0, left: 0,
+            ..review_card()
+        };
+
+        let (new_card, _) = answer_card(&card, Rating::Easy, &conf, &timing, 1000);
+
+        assert_eq!(new_card.ctype, 2, "should be review");
+        assert_eq!(new_card.queue, 2);
+        assert_eq!(new_card.ivl, conf.graduating_interval_easy as i32);
+    }
 }

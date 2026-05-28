@@ -22,6 +22,7 @@ pub struct ReviewScreen<'a> {
     pub back_lines: &'a [Line<'a>],
     pub scroll: u16,
     pub intervals: [i32; 4],
+    pub dry_run: bool,
 }
 
 impl Widget for ReviewScreen<'_> {
@@ -41,6 +42,7 @@ impl Widget for ReviewScreen<'_> {
             self.new_remaining,
             self.learn_remaining,
             self.review_remaining,
+            self.dry_run,
         );
 
         // Content area
@@ -74,14 +76,23 @@ fn render_top_bar(
     new_count: u32,
     learn_count: u32,
     review_count: u32,
+    dry_run: bool,
 ) {
-    let line = Line::from(vec![
-        Span::styled(
-            format!(" {deck_name} "),
+    let mut spans = vec![Span::styled(
+        format!(" {deck_name} "),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if dry_run {
+        spans.push(Span::styled(
+            "[DRY RUN] ",
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        ),
+        ));
+    }
+    spans.extend([
         Span::raw("  "),
         Span::styled(
             format!("{new_count}"),
@@ -104,6 +115,7 @@ fn render_top_bar(
                 .add_modifier(Modifier::BOLD),
         ),
     ]);
+    let line = Line::from(spans);
     buf.set_line(area.x, area.y, &line, area.width);
 }
 

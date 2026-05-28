@@ -24,7 +24,3 @@ impl Widget for CardContent<'_> {
     }
 }
 
-/// Calculate the maximum scroll position.
-pub fn max_scroll(total_lines: usize, visible_height: u16) -> u16 {
-    total_lines.saturating_sub(visible_height as usize) as u16
-}

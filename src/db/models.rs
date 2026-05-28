@@ -1,3 +1,6 @@
+/// Schema-mirror structs for Anki's SQLite tables.
+/// Fields mirror the DB schema even when not all are read by the app.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CardRow {
     pub id: i64,
@@ -20,6 +23,7 @@ pub struct CardRow {
     pub data: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct NoteRow {
     pub id: i64,
@@ -35,6 +39,7 @@ pub struct DeckRow {
     pub kind: Vec<u8>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TemplateRow {
     pub ntid: i64,
@@ -43,13 +48,7 @@ pub struct TemplateRow {
     pub config: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
-pub struct FieldRow {
-    pub ntid: i64,
-    pub ord: i32,
-    pub name: String,
-}
-
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct NotetypeRow {
     pub id: i64,
@@ -57,6 +56,7 @@ pub struct NotetypeRow {
     pub config: Vec<u8>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DeckConfigRow {
     pub id: i64,
@@ -77,7 +77,6 @@ pub struct RevlogEntry {
     pub review_type: i32,
 }
 
-/// Deck with computed due counts for display.
 #[derive(Debug, Clone)]
 pub struct DeckInfo {
     pub id: i64,

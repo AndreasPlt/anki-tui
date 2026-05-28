@@ -1,6 +1,7 @@
 use super::decode::{decode_fields, get_string, get_varint};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct NotetypeConfig {
     /// 0 = normal, 1 = cloze
     pub kind: u32,

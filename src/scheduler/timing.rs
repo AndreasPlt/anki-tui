@@ -4,6 +4,7 @@ use chrono::{Local, TimeZone, Timelike};
 pub struct SchedTiming {
     pub now_secs: i64,
     pub days_elapsed: i64,
+    #[allow(dead_code)]
     pub next_day_at: i64,
 }
 
@@ -28,7 +29,7 @@ pub fn sched_timing_today(creation_secs: i64, _creation_offset_mins: i32) -> Sch
     let creation_local = Local
         .timestamp_opt(creation_secs, 0)
         .single()
-        .unwrap_or_else(|| Local::now());
+        .unwrap_or_else(Local::now);
     let creation_date = if creation_local.hour() < rollover_hour {
         creation_local.date_naive() - chrono::Duration::days(1)
     } else {
