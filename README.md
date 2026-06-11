@@ -118,3 +118,9 @@ Useful sidecar overrides:
 - `ANKI_TUI_PYTHON`: choose the Python executable used to create the managed venv
 - `ANKI_TUI_SIDECAR_HOME`: choose where the managed venv and sidecar script are stored
 - `ANKI_TUI_WHEELHOUSE_DIR`: choose where offline wheels are read from
+
+## Disclaimer
+
+Almost entirely with AI (Claude Code) — partly out of curiosity to see how far a
+"purely vibe-coded" project can go, partly to quickly validate a random idea I had while working on my dissertation.
+I'm surprisingly satisfied with the result, and hope this can be useful to someone out there as well.
