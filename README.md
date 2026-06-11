@@ -58,7 +58,15 @@ anki-tui --collection copy.anki2 --media-dir ~/Library/Application\ Support/Anki
 
 # Browse without writing to the database
 anki-tui --dry-run
+
+# Resume the last review session (or set ANKI_TUI_RESUME=1)
+anki-tui --resume
 ```
+
+With `--resume`, the current deck is remembered in `~/.local/share/anki-tui/session.json`
+(respects `XDG_DATA_HOME`) and the next `--resume` run jumps straight back into reviewing it,
+skipping the deck list. The session is cleared once the deck is finished. Sessions are only
+recorded on runs started with `--resume`.
 
 ## Keybindings
 

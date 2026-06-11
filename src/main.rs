@@ -17,8 +17,10 @@ fn main() -> Result<()> {
     } else {
         app::ReviewMode::Live
     };
+    let resume = args.iter().any(|a| a == "--resume")
+        || std::env::var("ANKI_TUI_RESUME").is_ok_and(|v| v == "1" || v == "true");
 
-    let mut app = app::App::new(&collection_path, media_dir, review_mode)?;
+    let mut app = app::App::new(&collection_path, media_dir, review_mode, resume)?;
     let mut terminal = tui::terminal::init().map_err(error::Error::Io)?;
 
     let result = app.run(&mut terminal);

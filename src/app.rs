@@ -12,6 +12,31 @@ use ratatui::widgets::{Clear, StatefulWidget, Widget};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+fn session_path() -> Option<PathBuf> {
+    crate::sidecar::data_home().map(|p| p.join("anki-tui").join("session.json"))
+}
+
+fn save_session(deck_id: i64) {
+    let Some(path) = session_path() else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, format!("{{\"deck_id\":{deck_id}}}"));
+}
+
+fn load_session() -> Option<i64> {
+    let path = session_path()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    v.get("deck_id")?.as_i64()
+}
+
+fn clear_session() {
+    if let Some(path) = session_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewMode {
     Live,
@@ -26,6 +51,7 @@ pub struct App {
     kitty_supported: bool,
     review_mode: ReviewMode,
     audio_player: Option<crate::media::audio::AudioPlayer>,
+    resume: bool,
 }
 
 enum Screen {
@@ -109,6 +135,7 @@ impl App {
         collection_path: &Path,
         media_dir: PathBuf,
         review_mode: ReviewMode,
+        resume: bool,
     ) -> Result<Self> {
         let sidecar = SidecarClient::start(collection_path, &media_dir)?;
 
@@ -123,11 +150,26 @@ impl App {
             kitty_supported: kitty::is_kitty_supported(),
             review_mode,
             audio_player: crate::media::audio::AudioPlayer::new(),
+            resume,
         })
     }
 
     pub fn run(&mut self, terminal: &mut Tui) -> Result<()> {
-        self.load_deck_list()?;
+        let mut resumed = false;
+        if self.resume {
+            if let Some(deck_id) = load_session() {
+                if self.start_review(deck_id).is_ok()
+                    && matches!(self.screen, Screen::Review(_))
+                {
+                    resumed = true;
+                } else {
+                    clear_session();
+                }
+            }
+        }
+        if !resumed {
+            self.load_deck_list()?;
+        }
         let mut needs_redraw = true;
         let mut force_clear = true;
 
@@ -366,9 +408,15 @@ impl App {
             .start_review(deck_id, self.review_mode == ReviewMode::DryRun)?;
         let deck_name = snapshot.deck_name.clone();
         if let Some(rs) = state_from_snapshot(snapshot, &self.media_dir, 0) {
+            if self.resume {
+                save_session(deck_id);
+            }
             self.screen = Screen::Review(Box::new(rs));
             self.play_current_audio();
         } else {
+            if self.resume {
+                clear_session();
+            }
             self.screen = Screen::Done {
                 deck_name,
                 reviewed: 0,
@@ -396,6 +444,9 @@ impl App {
             self.screen = Screen::Review(Box::new(rs));
             self.play_current_audio();
         } else {
+            if self.resume {
+                clear_session();
+            }
             self.screen = Screen::Done {
                 deck_name: if deck_name.is_empty() {
                     deck_id.to_string()

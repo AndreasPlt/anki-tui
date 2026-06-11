@@ -366,7 +366,7 @@ fn default_wheelhouse_hint() -> String {
         .unwrap_or_else(|| "$XDG_DATA_HOME/anki-tui/wheels".to_string())
 }
 
-fn data_home() -> Option<PathBuf> {
+pub(crate) fn data_home() -> Option<PathBuf> {
     let xdg_data_home = env::var_os("XDG_DATA_HOME");
     let home = env::var_os("HOME");
     data_home_from_values(xdg_data_home.as_deref(), home.as_deref())
