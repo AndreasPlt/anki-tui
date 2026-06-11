@@ -2,6 +2,13 @@
 name = "anki-tui"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "Terminal-based flashcard reviewer for local Anki collections"
+repository = "https://github.com/AndreasPlt/anki-tui"
+license = "MIT"
+readme = "README.md"
+keywords = ["anki", "flashcards", "tui", "terminal", "srs"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 ratatui = "0.30"
