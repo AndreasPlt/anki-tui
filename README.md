@@ -26,8 +26,9 @@ cargo build --release
 
 Binary at `target/release/anki-tui`.
 
-The sidecar installs Anki's official Python package from a local wheelhouse on first run.
-For development or packaging, create that wheelhouse with:
+On first run, the sidecar installs Anki's official Python package (`anki==25.9.4`) from PyPI
+into a managed virtual environment — a one-time download. For offline installs, provide a
+local wheelhouse instead; if one is found, it takes precedence and no network is used:
 
 ```bash
 scripts/build-sidecar-wheelhouse.sh
@@ -103,7 +104,7 @@ recorded on runs started with `--resume`.
 
 ## Limitations
 
-- Requires Python 3.10-3.13 and an offline wheelhouse containing the compatible official `anki` Python package
+- Requires Python 3.10-3.13; the first run downloads the official `anki` Python package from PyPI unless a local wheelhouse is provided
 - Do not keep Anki Desktop open on the same collection while using live review mode
 - `--dry-run` is a no-write preview; it advances through queued cards for the session but does not simulate all future scheduler transitions
 - Undo is not implemented in the TUI

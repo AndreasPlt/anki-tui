@@ -215,6 +215,7 @@ fn spawn_sidecar() -> Result<Child> {
 
     let (python, script) = prepare_managed_sidecar()?;
     Command::new(python)
+        .arg("-I")
         .arg("-u")
         .arg(script)
         .stdin(Stdio::piped())
@@ -258,7 +259,6 @@ fn prepare_managed_sidecar() -> Result<(PathBuf, PathBuf)> {
     }
 
     let wheelhouse = wheelhouse_dir()?;
-    ensure_wheelhouse_contains_anki(&wheelhouse)?;
     let python = find_python()?;
 
     if venv.exists() {
@@ -274,20 +274,20 @@ fn prepare_managed_sidecar() -> Result<(PathBuf, PathBuf)> {
     }
 
     run_checked(
-        Command::new(&python).arg("-m").arg("venv").arg(&venv),
+        Command::new(&python).arg("-I").arg("-m").arg("venv").arg(&venv),
         "create sidecar Python environment",
     )?;
-    run_checked(
-        Command::new(&venv_python)
-            .arg("-m")
-            .arg("pip")
-            .arg("install")
-            .arg("--no-index")
-            .arg("--find-links")
-            .arg(&wheelhouse)
-            .arg(format!("anki=={ANKI_VERSION}")),
-        "install sidecar Python dependencies from wheelhouse",
-    )?;
+    let mut pip = Command::new(&venv_python);
+    pip.arg("-I").arg("-m").arg("pip").arg("install");
+    let description = if let Some(wheelhouse) = &wheelhouse {
+        pip.arg("--no-index").arg("--find-links").arg(wheelhouse);
+        "install sidecar Python dependencies from wheelhouse"
+    } else {
+        eprintln!("anki-tui: no local wheelhouse found; downloading anki=={ANKI_VERSION} from PyPI (one-time setup)");
+        "install sidecar Python dependencies from PyPI"
+    };
+    pip.arg(format!("anki=={ANKI_VERSION}"));
+    run_checked(&mut pip, description)?;
     fs::write(&marker, SIDECAR_ENV_ID)?;
 
     Ok((venv_python, script))
@@ -306,9 +306,11 @@ fn sidecar_home() -> Result<PathBuf> {
         })
 }
 
-fn wheelhouse_dir() -> Result<PathBuf> {
+fn wheelhouse_dir() -> Result<Option<PathBuf>> {
     if let Some(path) = non_empty_env_path("ANKI_TUI_WHEELHOUSE_DIR") {
-        return existing_wheelhouse(path, "ANKI_TUI_WHEELHOUSE_DIR");
+        let path = existing_wheelhouse(path, "ANKI_TUI_WHEELHOUSE_DIR")?;
+        ensure_wheelhouse_contains_anki(&path)?;
+        return Ok(Some(path));
     }
 
     let mut candidates = Vec::new();
@@ -338,15 +340,13 @@ fn wheelhouse_dir() -> Result<PathBuf> {
             .join("wheels"),
     );
 
+    Ok(select_wheelhouse(candidates))
+}
+
+fn select_wheelhouse(candidates: Vec<PathBuf>) -> Option<PathBuf> {
     candidates
         .into_iter()
-        .find(|path| path.is_dir())
-        .ok_or_else(|| {
-            Error::Sidecar(format!(
-                "could not find sidecar wheelhouse; install wheels under {}, set ANKI_TUI_WHEELHOUSE_DIR, or run scripts/build-sidecar-wheelhouse.sh",
-                default_wheelhouse_hint()
-            ))
-        })
+        .find(|path| path.is_dir() && ensure_wheelhouse_contains_anki(path).is_ok())
 }
 
 fn existing_wheelhouse(path: PathBuf, source: &str) -> Result<PathBuf> {
@@ -358,12 +358,6 @@ fn existing_wheelhouse(path: PathBuf, source: &str) -> Result<PathBuf> {
             path.display()
         )))
     }
-}
-
-fn default_wheelhouse_hint() -> String {
-    data_home()
-        .map(|path| path.join("anki-tui").join("wheels").display().to_string())
-        .unwrap_or_else(|| "$XDG_DATA_HOME/anki-tui/wheels".to_string())
 }
 
 pub(crate) fn data_home() -> Option<PathBuf> {
@@ -550,8 +544,8 @@ fn ensure_wheelhouse_contains_anki(wheelhouse: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        data_home_from_values, ensure_wheelhouse_contains_anki, is_supported_python,
-        parse_python_version, venv_python_path,
+        ANKI_VERSION, data_home_from_values, ensure_wheelhouse_contains_anki, is_supported_python,
+        parse_python_version, select_wheelhouse, venv_python_path,
     };
     use std::ffi::OsStr;
     use std::fs;
@@ -618,6 +612,38 @@ mod tests {
         assert!(ensure_wheelhouse_contains_anki(&wheelhouse).is_ok());
 
         fs::remove_dir_all(wheelhouse).unwrap();
+    }
+
+    #[test]
+    fn selects_first_candidate_with_pinned_wheel_or_falls_back() {
+        let missing = unique_temp_dir("anki-tui-wh-missing");
+        let _ = fs::remove_dir_all(&missing);
+
+        let stale = unique_temp_dir("anki-tui-wh-stale");
+        let _ = fs::remove_dir_all(&stale);
+        fs::create_dir_all(&stale).unwrap();
+        fs::write(stale.join("anki-0.0.1-py3-none-any.whl"), b"stale wheel").unwrap();
+
+        let valid = unique_temp_dir("anki-tui-wh-valid");
+        let _ = fs::remove_dir_all(&valid);
+        fs::create_dir_all(&valid).unwrap();
+        fs::write(
+            valid.join(format!("anki-{ANKI_VERSION}-py3-none-any.whl")),
+            b"not a real wheel",
+        )
+        .unwrap();
+
+        // Missing and stale candidates are skipped in favor of the valid one.
+        assert_eq!(
+            select_wheelhouse(vec![missing.clone(), stale.clone(), valid.clone()]),
+            Some(valid.clone())
+        );
+        // No valid candidate -> None, which triggers the PyPI fallback.
+        assert_eq!(select_wheelhouse(vec![missing, stale.clone()]), None);
+        assert_eq!(select_wheelhouse(Vec::new()), None);
+
+        fs::remove_dir_all(stale).unwrap();
+        fs::remove_dir_all(valid).unwrap();
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
